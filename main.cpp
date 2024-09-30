@@ -4,102 +4,39 @@
 
 int main ()
 {
-    stack stk = INIT (stk);
 
-    enum STACK_ERROR error = DONE;
+    STACK_INIT (stk, 10);
 
-    error = stack_ctor (&stk, 10);
-    if (error != DONE)
-    {
-        printf (decoder_error (error));
-    }
+    my_errno = stack_push (stk, 'r') CHECKED;
 
-    error = stack_push (&stk, 'r');
-    if (error != DONE)
-    {
-        printf (decoder_error (error));
-    }
+    my_errno = stack_push (stk, 't') CHECKED;
 
-    error = stack_push (&stk, 't');
-    if (error != DONE)
-    {
-        printf (decoder_error (error));
-    }
+    my_errno = stack_push (stk, ' ') CHECKED;
 
-    error = stack_push (&stk, ' ');
-    if (error != DONE)
-    {
-        printf (decoder_error (error));
-    }
+    my_errno = stack_push (stk, 's') CHECKED;
 
-    error = stack_push (&stk, 's');
-    if (error != DONE)
-    {
-        printf (decoder_error (error));
-    }
+    my_errno = stack_push (stk, 't') CHECKED;
 
-    error = stack_push (&stk, 't');
-    if (error != DONE)
-    {
-        printf (decoder_error (error));
-    }
+    my_errno = stack_push (stk, 'a') CHECKED;
 
-    error = stack_push (&stk, 'a');
-    if (error != DONE)
-    {
-        printf (decoder_error (error));
-    }
+    my_errno = stack_push (stk, 'c') CHECKED;
 
-    error = stack_push (&stk, 'c');
-    if (error != DONE)
-    {
-        printf (decoder_error (error));
-    }
+    my_errno = stack_push (stk, 'k') CHECKED;
 
-    error = stack_push (&stk, 'k');
-    if (error != DONE)
-    {
-        printf (decoder_error (error));
-    }
-
-    error = DUMP (&stk);
-    if (error != DONE)
-    {
-        printf (decoder_error (error));
-    }
+    my_errno = DUMP (stk) CHECKED;
 
     char execute_1 = '\0';
     char execute_2 = '\0';
 
-    error = stack_pop (&stk, &execute_1);
-    if (error != DONE)
-    {
-        printf (decoder_error (error));
-    }
+    my_errno = stack_pop (stk, &execute_1) CHECKED;
 
-    error = stack_pop (&stk, &execute_2);
-    if (error != DONE)
-    {
-        printf (decoder_error (error));
-    }
+    my_errno = stack_pop (stk, &execute_2) CHECKED;
 
     printf ("\n execute_1 = %c \n execute_2 = %c \n", execute_1, execute_2);
 
-    error = stack_push (&stk, 'r');
-    if (error != DONE)
-    {
-        printf (decoder_error (error));
-    }
+    my_errno = stack_push (stk, 'r') CHECKED;
 
-    error = DUMP (&stk);
-    if (error != DONE)
-    {
-        printf (decoder_error (error));
-    }
+    my_errno = DUMP (stk) CHECKED;
 
-    error = stack_dtor (&stk);
-    if (error != DONE)
-    {
-        printf (decoder_error (error));
-    }
+    STACK_DTOR (stk);
 }

@@ -5,13 +5,36 @@
 
 typedef char stack_elem;
 
-#define INIT(stk)  {__FILE__, __LINE__, __FUNCTION__, #stk, 0, 0, NULL}
+#ifdef NDEBUG
+
+#define CHECKED ;                          \
+    if (my_errno != DONE)                  \
+    {                                      \
+        printf (decoder_error (my_errno)); \
+    }
+
+#else
+
+#define CHECKED
+
+#endif // NDEBUG
+
+#define STACK_INIT(stk, number)                                                     \
+    size_t stk;                                                                     \
+    stack_ctor (&(stk), (number), __FILE__, __LINE__, __FUNCTION__, #stk) CHECKED;
+
+#define STACK_DTOR(stk)         \
+{                               \
+    stack_dtor (stk) CHECKED;   \
+    stk = 0;                    \
+}
 
 #define DUMP(stk)  dump ((stk), __FILE__, __LINE__)
 
 #define CASE_ERROR(num_error)   \
     case num_error:             \
         return #num_error
+
 
 enum STACK_ERROR
 {
@@ -22,13 +45,14 @@ enum STACK_ERROR
     CANT_PUSH     = 1 << 3,
     CANT_POP      = 1 << 4,
     CANT_DUMP     = 1 << 5,
-    BAD_FILE_NAME = 1 << 6,
-    BAD_LINE_NUM  = 1 << 7,
-    BAD_NAME      = 1 << 8,
-    BAD_SIZE      = 1 << 9,
-    BAD_CAPACITY  = 1 << 10,
-    BAD_DATA      = 1 << 11,
-    BAD_STACK     = 1 << 12,
+    BAD_STACK_PTR = 1 << 6,
+    BAD_FILE_NAME = 1 << 7,
+    BAD_LINE_NUM  = 1 << 8,
+    BAD_NAME      = 1 << 9,
+    BAD_SIZE      = 1 << 10,
+    BAD_CAPACITY  = 1 << 11,
+    BAD_DATA      = 1 << 12,
+    BAD_STACK     = 1 << 13,
 };
 
 enum RESIZE_DIRECTION
@@ -56,11 +80,14 @@ struct stack_t
 
 typedef struct stack_t stack;
 
-enum STACK_ERROR stack_ctor   (stack* const stk, const size_t num_elem);
-enum STACK_ERROR stack_dtor   (stack* const stk);
-enum STACK_ERROR stack_push   (stack* const stk, const stack_elem element);
-enum STACK_ERROR stack_pop    (stack* const stk, stack_elem* const element);
-enum STACK_ERROR dump         (stack* const stk, const char* const file, const int line);
-const char* decoder_error     (const int error);
+enum STACK_ERROR stack_ctor (size_t* const stack_encode, const size_t num_elem,
+                             const char* file, const int line, const char* func, const char* name);
+enum STACK_ERROR stack_dtor (const size_t stack_encode);
+enum STACK_ERROR stack_push (const size_t stack_encode, const stack_elem element);
+enum STACK_ERROR stack_pop  (const size_t stack_encode, stack_elem* const element);
+enum STACK_ERROR dump       (const size_t stack_encode, const char* const file, const int line);
+const char* decoder_error   (const int error);
+
+static enum STACK_ERROR my_errno = DONE;
 
 #endif // STACK_H

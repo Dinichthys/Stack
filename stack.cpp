@@ -1,5 +1,6 @@
 #include <stdlib.h>
 #include <stdio.h>
+#include <time.h>
 
 #include "stack.h"
 
@@ -9,11 +10,27 @@ static enum STACK_ERROR stack_resize (stack* const stk, const enum RESIZE_DIRECT
 static const char POISON     = '@';    //  '@' == 64
 static const size_t MIN_SIZE = 100;
 static const size_t MAX_SIZE = 20000;
-static const int stack_scale = 2;
+static const int STACK_SCALE = 2;
+static const size_t KEY      = (size_t) time (NULL);
 
-enum STACK_ERROR stack_ctor (stack* const stk, const size_t num_elem)
+enum STACK_ERROR stack_ctor (size_t* const stack_encode, const size_t num_elem,
+                             const char* file, const int line, const char* func, const char* name)
 {
-    if ((stk == NULL) || (stack_ok (*stk) != (DONE | BAD_DATA)))
+    if (stack_encode == NULL)
+    {
+        return CANT_CREATE;
+    }
+
+    stack* const stk = (stack*) calloc (1, sizeof (stack));
+
+    if (stk == NULL)
+    {
+        return CANT_CREATE;
+    }
+
+    *stk = {file, line, func, name, 0, 0, NULL};
+
+    if (stack_ok (*stk) != (DONE | BAD_DATA))
     {
         return CANT_CREATE;
     }
@@ -24,11 +41,14 @@ enum STACK_ERROR stack_ctor (stack* const stk, const size_t num_elem)
     stk->data = (stack_elem*) calloc (num, sizeof (stack_elem));
     stk->capacity = num;
 
+    *stack_encode = ((size_t) stk) ^ KEY;
     return (stk->data == NULL) ? CANT_CREATE : DONE;
 }
 
-enum STACK_ERROR stack_dtor (stack* const stk)
+enum STACK_ERROR stack_dtor (const size_t stack_encode)
 {
+    stack* const stk = (stack*) (stack_encode ^ KEY);
+
     if ((stk  == NULL) || (stack_ok (*stk) != DONE))
     {
         return CANT_DESTROY;
@@ -40,6 +60,7 @@ enum STACK_ERROR stack_dtor (stack* const stk)
     stk->size = 0;
     stk->capacity = 0;
     free (stk->data);
+    free (stk);
 
     return DONE;
 }
@@ -95,15 +116,17 @@ static enum STACK_ERROR stack_resize (stack* const stk, const enum RESIZE_DIRECT
     }
 
     stk->capacity = (flag == UP)
-                            ? stk->capacity * stack_scale
-                            : stk->capacity / stack_scale;
+                            ? stk->capacity * STACK_SCALE
+                            : stk->capacity / STACK_SCALE;
     stk->data = (stack_elem*) realloc (stk->data, stk->capacity);
 
     return (stk->data == NULL) ? CANT_RESIZE : DONE;
 }
 
-enum STACK_ERROR stack_push (stack* const stk, const stack_elem element)
+enum STACK_ERROR stack_push (const size_t stack_encode, const stack_elem element)
 {
+    stack* const stk = (stack*) (stack_encode ^ KEY);
+
     if ((stk == NULL) || (stack_ok (*stk) != DONE))
     {
         return CANT_PUSH;
@@ -122,8 +145,10 @@ enum STACK_ERROR stack_push (stack* const stk, const stack_elem element)
     return error;
 }
 
-enum STACK_ERROR stack_pop (stack* const stk, stack_elem* const element)
+enum STACK_ERROR stack_pop (const size_t stack_encode, stack_elem* const element)
 {
+    stack* const stk = (stack*) (stack_encode ^ KEY);
+
     if ((stk == NULL) || (element == NULL) || (stack_ok (*stk) != DONE))
     {
         return CANT_POP;
@@ -148,8 +173,10 @@ enum STACK_ERROR stack_pop (stack* const stk, stack_elem* const element)
     return error;
 }
 
-enum STACK_ERROR dump (stack* const stk, const char* const file, const int line)
+enum STACK_ERROR dump (const size_t stack_encode, const char* const file, const int line)
 {
+    stack* const stk = (stack*) (stack_encode ^ KEY);
+
     if ((file == NULL) || (line <= 0))
     {
         return CANT_DUMP;
