@@ -76,6 +76,13 @@ struct stack_t
     size_t capacity;
 
     stack_elem* data;
+
+    #ifdef HASH
+
+    size_t hash_data;
+    size_t hash_stack;
+
+    #endif // HASH
 };
 
 typedef struct stack_t stack;
