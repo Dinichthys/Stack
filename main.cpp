@@ -51,7 +51,7 @@ int main ()
 
     char c = '\0';
 
-    for (int i = 0; i < 10; i++)
+    for (int i = 0; i < 1001; i++)
     {
         my_errno = stack_pop (test_stk, &c) CHECKED;
     }

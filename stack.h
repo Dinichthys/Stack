@@ -13,11 +13,11 @@ typedef char stack_elem;
         printf ("%s", decoder_error (my_errno));    \
     }
 
-#else
+#else // DEBUG
 
 #define CHECKED
 
-#endif // NDEBUG
+#endif // DEBUG
 
 #define STACK_INIT(stk, number)                                                     \
     size_t stk;                                                                     \
