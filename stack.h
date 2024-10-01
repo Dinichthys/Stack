@@ -5,12 +5,12 @@
 
 typedef char stack_elem;
 
-#ifdef NDEBUG
+#ifdef DEBUG
 
-#define CHECKED ;                          \
-    if (my_errno != DONE)                  \
-    {                                      \
-        printf (decoder_error (my_errno)); \
+#define CHECKED ;                                   \
+    if (my_errno != DONE)                           \
+    {                                               \
+        printf ("%s", decoder_error (my_errno));    \
     }
 
 #else
@@ -33,7 +33,7 @@ typedef char stack_elem;
 
 #define CASE_ERROR(num_error)   \
     case num_error:             \
-        return #num_error
+        return "\n" #num_error "\n"
 
 
 enum STACK_ERROR
@@ -77,12 +77,12 @@ struct stack_t
 
     stack_elem* data;
 
-    #ifdef HASH
+    #ifdef HASH_PROT
 
     size_t hash_data;
     size_t hash_stack;
 
-    #endif // HASH
+    #endif // HASH_PROT
 };
 
 typedef struct stack_t stack;

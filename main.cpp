@@ -39,4 +39,24 @@ int main ()
     my_errno = DUMP (stk) CHECKED;
 
     STACK_DTOR (stk);
+
+    STACK_INIT (test_stk, 1);
+
+    for (int i = 0; i < 1000; i++)
+    {
+        my_errno = stack_push (test_stk, 'a');
+    }
+
+    my_errno = DUMP (test_stk) CHECKED;
+
+    char c = '\0';
+
+    for (int i = 0; i < 10; i++)
+    {
+        my_errno = stack_pop (test_stk, &c) CHECKED;
+    }
+
+    my_errno = DUMP (test_stk) CHECKED;
+
+    STACK_DTOR (test_stk);
 }
