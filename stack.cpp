@@ -5,6 +5,18 @@
 
 #include "stack.h"
 
+#ifdef HASH_PROT
+
+#include "hash.h"
+
+#endif // HASH_PROT
+
+#ifdef CANARY_PROT
+
+static bool check_canary (stack* const stk);
+
+#endif // CANARY_PROT
+
 static int stack_ok (stack* const stk);
 static enum STACK_ERROR stack_resize (stack* const stk, const enum RESIZE_DIRECTION flag);
 
@@ -20,6 +32,18 @@ static const size_t MAX_SIZE = 20000;
 static const int STACK_SCALE = 2;
 static const size_t KEY      = (size_t) time (NULL);
 
+#ifdef CANARY_PROT
+
+static bool check_canary (stack* const stk)
+{
+    return (memcmp ((char*) stk - sizeof (CANARY), &CANARY, sizeof (CANARY)) != 0)
+        || (memcmp ((char*) stk + sizeof (stack), &CANARY, sizeof (CANARY)) != 0)
+        || (memcmp ((char*) (stk->data) - sizeof (CANARY), &CANARY, sizeof (CANARY)) != 0)
+        || (memcmp ((char*) (stk->data) + stk->capacity * sizeof (stack_elem), &CANARY, sizeof (CANARY)) != 0);
+}
+
+#endif // CANARY_PROT
+
 enum STACK_ERROR stack_ctor (size_t* const stack_encode, const size_t num_elem,
                              const char* file, const int line, const char* func, const char* name)
 {
@@ -31,6 +55,12 @@ enum STACK_ERROR stack_ctor (size_t* const stack_encode, const size_t num_elem,
     #ifdef CANARY_PROT
 
     stack* const stk = (stack*) ((char*) calloc (1, sizeof (stack) + 2 * sizeof (CANARY)) + sizeof (CANARY));
+
+    if ((char*) stk - sizeof (CANARY) == NULL)
+    {
+        return CANT_CREATE;
+    }
+
     memcpy ((char*) stk - sizeof (CANARY), &CANARY, sizeof (CANARY));
     memcpy ((char*) stk + sizeof (stack), &CANARY, sizeof (CANARY));
 
@@ -38,13 +68,12 @@ enum STACK_ERROR stack_ctor (size_t* const stack_encode, const size_t num_elem,
 
     stack* const stk = (stack*) calloc (1, sizeof (stack));
 
-    #endif // CANARY_PROT
-
-
     if (stk == NULL)
     {
         return CANT_CREATE;
     }
+
+    #endif // CANARY_PROT
 
     *stk = {file, line, func, name, 0, 0, NULL};
 
@@ -54,6 +83,12 @@ enum STACK_ERROR stack_ctor (size_t* const stack_encode, const size_t num_elem,
     #ifdef CANARY_PROT
 
     stk->data = (stack_elem*) ((char*) calloc (num, sizeof (stack_elem) + 2 * sizeof (CANARY)) + sizeof (CANARY));
+
+    if ((char*) stk->data - sizeof (CANARY) == NULL)
+    {
+        return CANT_CREATE;
+    }
+
     memcpy ((char*) (stk->data) - sizeof (CANARY), &CANARY, sizeof (CANARY));
     memcpy ((char*) (stk->data) + num * sizeof (stack_elem), &CANARY, sizeof (CANARY));
 
@@ -61,17 +96,25 @@ enum STACK_ERROR stack_ctor (size_t* const stack_encode, const size_t num_elem,
 
     stk->data = (stack_elem*) calloc (num, sizeof (stack_elem));
 
+    if (stk->data == NULL)
+    {
+        return CANT_CREATE;
+    }
+
     #endif // CANARY_PROT
+
     stk->capacity = num;
+
+    for (size_t i = 0; i < stk->capacity; i++)
+    {
+        stk->data [i] = POISON;
+    }
 
     *stack_encode = ((size_t) stk) ^ KEY;
 
     #ifdef CANARY_PROT
 
-    if ((memcmp ((char*) stk - sizeof (CANARY), &CANARY, sizeof (CANARY)) != 0)
-        || (memcmp ((char*) stk + sizeof (stack), &CANARY, sizeof (CANARY)) != 0)
-        || (memcmp ((char*) (stk->data) - sizeof (CANARY), &CANARY, sizeof (CANARY)) != 0)
-        || (memcmp ((char*) (stk->data) + stk->capacity * sizeof (stack_elem), &CANARY, sizeof (CANARY)) != 0))
+    if (check_canary (stk))
     {
         return CANT_CREATE;
     }
@@ -80,25 +123,13 @@ enum STACK_ERROR stack_ctor (size_t* const stack_encode, const size_t num_elem,
 
     #ifdef HASH_PROT
 
-    char* hash_ptr = (char*) (stk->data);
+    stk->hash_data = hashing (stk->data, stk->capacity * sizeof (stack_elem));
 
-    while (hash_ptr < (char*) (stk->data) + stk->capacity * sizeof (stack_elem))
-    {
-        stk->hash_data += (size_t) *hash_ptr;
-        hash_ptr++;
-    }
-
-    hash_ptr = (char*) stk;
-
-    while (hash_ptr < (char*) stk + sizeof (stack) - sizeof (stk->hash_stack))
-    {
-        stk->hash_stack += (size_t) *hash_ptr;
-        hash_ptr++;
-    }
+    stk->hash_stack = hashing (stk, sizeof (stack) - sizeof (stk->hash_stack));
 
     #endif // HASH_PROT
 
-    return (stk->data == NULL) ? CANT_CREATE : DONE;
+    return DONE;
 }
 
 enum STACK_ERROR stack_dtor (const size_t stack_encode)
@@ -112,10 +143,7 @@ enum STACK_ERROR stack_dtor (const size_t stack_encode)
 
     #ifdef CANARY_PROT
 
-    if ((memcmp ((char*) stk - sizeof (CANARY), &CANARY, sizeof (CANARY)) != 0)
-        || (memcmp ((char*) stk + sizeof (stack), &CANARY, sizeof (CANARY)) != 0)
-        || (memcmp ((char*) (stk->data) - sizeof (CANARY), &CANARY, sizeof (CANARY)) != 0)
-        || (memcmp ((char*) (stk->data) + stk->capacity * sizeof (stack_elem), &CANARY, sizeof (CANARY)) != 0))
+    if (check_canary (stk))
     {
         return CANT_DESTROY;
     }
@@ -124,32 +152,12 @@ enum STACK_ERROR stack_dtor (const size_t stack_encode)
 
     #ifdef HASH_PROT
 
-    char* hash_ptr = (char*) (stk->data);
-
-    size_t hash_sum = 0;
-
-    while (hash_ptr < (char*) (stk->data) + stk->capacity * sizeof (stack_elem))
-    {
-        hash_sum += (size_t) *hash_ptr;
-        hash_ptr++;
-    }
-
-    if (hash_sum != stk->hash_data)
+    if (stk->hash_stack != hashing (stk, sizeof (stack) - sizeof (stk->hash_stack)))
     {
         return CANT_DESTROY;
     }
 
-    hash_sum = 0;
-
-    hash_ptr = (char*) stk;
-
-    while (hash_ptr < (char*) stk + sizeof (stack) - sizeof (stk->hash_stack))
-    {
-        hash_sum += (size_t) *hash_ptr;
-        hash_ptr++;
-    }
-
-    if (hash_sum != stk->hash_stack)
+    if (stk->hash_data != hashing (stk->data, stk->capacity * sizeof (stack_elem)))
     {
         return CANT_DESTROY;
     }
@@ -203,10 +211,7 @@ static int stack_ok (stack* const stk)
 
     #ifdef CANARY_PROT
 
-    if ((memcmp ((char*) stk - sizeof (CANARY), &CANARY, sizeof (CANARY)) != 0)
-        || (memcmp ((char*) stk + sizeof (stack), &CANARY, sizeof (CANARY)) != 0)
-        || (memcmp ((char*) (stk->data) - sizeof (CANARY), &CANARY, sizeof (CANARY)) != 0)
-        || (memcmp ((char*) (stk->data) + stk->capacity * sizeof (stack_elem), &CANARY, sizeof (CANARY)) != 0))
+    if (check_canary (stk))
     {
         return BAD_STACK;
     }
@@ -215,32 +220,12 @@ static int stack_ok (stack* const stk)
 
     #ifdef HASH_PROT
 
-    char* hash_ptr = (char*) (stk->data);
-
-    size_t hash_sum = 0;
-
-    while (hash_ptr < (char*) (stk->data) + stk->capacity * sizeof (stack_elem))
-    {
-        hash_sum += (size_t) *hash_ptr;
-        hash_ptr++;
-    }
-
-    if (hash_sum != stk->hash_data)
+    if (stk->hash_stack != hashing (stk, sizeof (stack) - sizeof (stk->hash_stack)))
     {
         return BAD_STACK;
     }
 
-    hash_sum = 0;
-
-    hash_ptr = (char*) stk;
-
-    while (hash_ptr < (char*) stk + sizeof (stack) - sizeof (stk->hash_stack))
-    {
-        hash_sum += (size_t) *hash_ptr;
-        hash_ptr++;
-    }
-
-    if (hash_sum != stk->hash_stack)
+    if (stk->hash_data != hashing (stk->data, stk->capacity * sizeof (stack_elem)))
     {
         return BAD_STACK;
     }
@@ -285,10 +270,7 @@ static int stack_ok (stack* const stk)
 
     #ifdef CANARY_PROT
 
-    if ((memcmp ((char*) stk - sizeof (CANARY), &CANARY, sizeof (CANARY)) != 0)
-        || (memcmp ((char*) stk + sizeof (stack), &CANARY, sizeof (CANARY)) != 0)
-        || (memcmp ((char*) (stk->data) - sizeof (CANARY), &CANARY, sizeof (CANARY)) != 0)
-        || (memcmp ((char*) (stk->data) + stk->capacity * sizeof (stack_elem), &CANARY, sizeof (CANARY)) != 0))
+    if (check_canary (stk))
     {
         return BAD_STACK;
     }
@@ -297,32 +279,12 @@ static int stack_ok (stack* const stk)
 
     #ifdef HASH_PROT
 
-    hash_ptr = (char*) (stk->data);
-
-    hash_sum = 0;
-
-    while (hash_ptr < (char*) (stk->data) + stk->capacity * sizeof (stack_elem))
-    {
-        hash_sum += *hash_ptr;
-        hash_ptr++;
-    }
-
-    if (hash_sum != stk->hash_data)
+    if (stk->hash_stack != hashing (stk, sizeof (stack) - sizeof (stk->hash_stack)))
     {
         return BAD_STACK;
     }
 
-    hash_sum = 0;
-
-    hash_ptr = (char*) stk;
-
-    while (hash_ptr < (char*) stk + sizeof (stack) - sizeof (stk->hash_stack))
-    {
-        hash_sum += (size_t) *hash_ptr;
-        hash_ptr++;
-    }
-
-    if (hash_sum != stk->hash_stack)
+    if (stk->hash_data != hashing (stk->data, stk->capacity * sizeof (stack_elem)))
     {
         return BAD_STACK;
     }
@@ -341,10 +303,7 @@ static enum STACK_ERROR stack_resize (stack* const stk, const enum RESIZE_DIRECT
 
     #ifdef CANARY_PROT
 
-    if ((memcmp ((char*) stk - sizeof (CANARY), &CANARY, sizeof (CANARY)) != 0)
-        || (memcmp ((char*) stk + sizeof (stack), &CANARY, sizeof (CANARY)) != 0)
-        || (memcmp ((char*) (stk->data) - sizeof (CANARY), &CANARY, sizeof (CANARY)) != 0)
-        || (memcmp ((char*) (stk->data) + stk->capacity * sizeof (stack_elem), &CANARY, sizeof (CANARY)) != 0))
+    if (check_canary (stk))
     {
         return CANT_RESIZE;
     }
@@ -355,32 +314,12 @@ static enum STACK_ERROR stack_resize (stack* const stk, const enum RESIZE_DIRECT
 
     #ifdef HASH_PROT
 
-    char* hash_ptr = (char*) (stk->data);
-
-    size_t hash_sum = 0;
-
-    while (hash_ptr < (char*) (stk->data) + stk->capacity * sizeof (stack_elem))
-    {
-        hash_sum += (size_t) *hash_ptr;
-        hash_ptr++;
-    }
-
-    if (hash_sum != stk->hash_data)
+    if (stk->hash_stack != hashing (stk, sizeof (stack) - sizeof (stk->hash_stack)))
     {
         return CANT_RESIZE;
     }
 
-    hash_sum = 0;
-
-    hash_ptr = (char*) stk;
-
-    while (hash_ptr < (char*) stk + sizeof (stack) - sizeof (stk->hash_stack))
-    {
-        hash_sum += *hash_ptr;
-        hash_ptr++;
-    }
-
-    if (hash_sum != stk->hash_stack)
+    if (stk->hash_data != hashing (stk->data, stk->capacity * sizeof (stack_elem)))
     {
         return CANT_RESIZE;
     }
@@ -396,6 +335,12 @@ static enum STACK_ERROR stack_resize (stack* const stk, const enum RESIZE_DIRECT
     stk->data = (stack_elem*) ((char*) realloc ((char*) stk->data - sizeof (CANARY),
                                                 stk->capacity * sizeof (stack_elem) + 2 * sizeof (CANARY))
                                                 + sizeof (CANARY));
+
+    if ((char*) stk->data - sizeof (CANARY) == NULL)
+    {
+        CANT_RESIZE;
+    }
+
     if (flag == UP)
     {
         size_t zero = 0UL;
@@ -403,45 +348,35 @@ static enum STACK_ERROR stack_resize (stack* const stk, const enum RESIZE_DIRECT
     }
     memcpy ((char*) (stk->data) + stk->capacity * sizeof (stack_elem), &CANARY, sizeof (CANARY));
 
-    #else
+    #else // CANARY_PROT
 
     stk->data = (stack_elem*) realloc (stk->data, stk->capacity * sizeof (stack_elem));
 
-    #endif // CANARY_PROT
-
-    #ifdef HASH_PROT
-
-    char* hash_ptr = (char*) (stk->data);
-
-    while (hash_ptr < (char*) (stk->data) + stk->capacity * sizeof (stack_elem))
-    {
-        stk->hash_data += *hash_ptr;
-        hash_ptr++;
-    }
-
-    hash_ptr = (char*) stk;
-
-    while (hash_ptr < (char*) stk + sizeof (stack) - sizeof (stack->hash_stack))
-    {
-        stk->hash_stack += *hash_ptr;
-        hash_ptr++;
-    }
-
-    #endif // HASH_PROT
-
-    #ifdef CANARY_PROT
-
-    if ((memcmp ((char*) stk - sizeof (CANARY), &CANARY, sizeof (CANARY)) != 0)
-        || (memcmp ((char*) stk + sizeof (stack), &CANARY, sizeof (CANARY)) != 0)
-        || (memcmp ((char*) (stk->data) - sizeof (CANARY), &CANARY, sizeof (CANARY)) != 0)
-        || (memcmp ((char*) (stk->data) + stk->capacity * sizeof (stack_elem), &CANARY, sizeof (CANARY)) != 0))
+    if (stk->data == NULL)
     {
         return CANT_RESIZE;
     }
 
     #endif // CANARY_PROT
 
-    return (stk->data == NULL) ? CANT_RESIZE : DONE;
+    #ifdef HASH_PROT
+
+    stk->hash_data = hashing (stk->data, stk->capacity * sizeof (stack_elem));
+
+    stk->hash_stack = hashing (stk, sizeof (stack) - sizeof (stk->hash_stack));
+
+    #endif // HASH_PROT
+
+    #ifdef CANARY_PROT
+
+    if (check_canary (stk))
+    {
+        return CANT_RESIZE;
+    }
+
+    #endif // CANARY_PROT
+
+    return DONE;
 }
 
 enum STACK_ERROR stack_push (const size_t stack_encode, const stack_elem element)
@@ -455,10 +390,7 @@ enum STACK_ERROR stack_push (const size_t stack_encode, const stack_elem element
 
     #ifdef CANARY_PROT
 
-    if ((memcmp ((char*) stk - sizeof (CANARY), &CANARY, sizeof (CANARY)) != 0)
-        || (memcmp ((char*) stk + sizeof (stack), &CANARY, sizeof (CANARY)) != 0)
-        || (memcmp ((char*) (stk->data) - sizeof (CANARY), &CANARY, sizeof (CANARY)) != 0)
-        || (memcmp ((char*) (stk->data) + stk->capacity * sizeof (stack_elem), &CANARY, sizeof (CANARY)) != 0))
+    if (check_canary (stk))
     {
         return CANT_PUSH;
     }
@@ -467,32 +399,12 @@ enum STACK_ERROR stack_push (const size_t stack_encode, const stack_elem element
 
     #ifdef HASH_PROT
 
-    char* hash_ptr = (char*) (stk->data);
-
-    size_t hash_sum = 0;
-
-    while (hash_ptr < (char*) (stk->data) + stk->capacity * sizeof (stack_elem))
-    {
-        hash_sum += *hash_ptr;
-        hash_ptr++;
-    }
-
-    if (hash_sum != stk->hash_data)
+    if (stk->hash_stack != hashing (stk, sizeof (stack) - sizeof (stk->hash_stack)))
     {
         return CANT_PUSH;
     }
 
-    hash_sum = 0;
-
-    hash_ptr = (char*) stk;
-
-    while (hash_ptr < (char*) stk + sizeof (stack) - sizeof (stack->hash_stack))
-    {
-        hash_sum += *hash_ptr;
-        hash_ptr++;
-    }
-
-    if (hash_sum != stk->hash_stack)
+    if (stk->hash_data != hashing (stk->data, stk->capacity * sizeof (stack_elem)))
     {
         return CANT_PUSH;
     }
@@ -511,10 +423,7 @@ enum STACK_ERROR stack_push (const size_t stack_encode, const stack_elem element
 
     #ifdef CANARY_PROT
 
-    if ((memcmp ((char*) stk - sizeof (CANARY), &CANARY, sizeof (CANARY)) != 0)
-        || (memcmp ((char*) stk + sizeof (stack), &CANARY, sizeof (CANARY)) != 0)
-        || (memcmp ((char*) (stk->data) - sizeof (CANARY), &CANARY, sizeof (CANARY)) != 0)
-        || (memcmp ((char*) (stk->data) + stk->capacity * sizeof (stack_elem), &CANARY, sizeof (CANARY)) != 0))
+    if (check_canary (stk))
     {
         return CANT_PUSH;
     }
@@ -523,12 +432,7 @@ enum STACK_ERROR stack_push (const size_t stack_encode, const stack_elem element
 
     #ifdef HASH_PROT
 
-    char* hash_ptr = (char*) (stk->data) + (stk->size - 1) * sizeof (stack_elem);
-
-    while (hash_ptr < (char*) (stk->data) + stk->size * sizeof (stack_elem))
-    {
-        stk->hash_data += *hash_ptr;
-    }
+    stk->hash_data = hashing (stk->data, stk->capacity * sizeof (stack_elem));
 
     #endif // HASH_PROT
 
@@ -546,10 +450,7 @@ enum STACK_ERROR stack_pop (const size_t stack_encode, stack_elem* const element
 
     #ifdef CANARY_PROT
 
-    if ((memcmp ((char*) stk - sizeof (CANARY), &CANARY, sizeof (CANARY)) != 0)
-        || (memcmp ((char*) stk + sizeof (stack), &CANARY, sizeof (CANARY)) != 0)
-        || (memcmp ((char*) (stk->data) - sizeof (CANARY), &CANARY, sizeof (CANARY)) != 0)
-        || (memcmp ((char*) (stk->data) + stk->capacity * sizeof (stack_elem), &CANARY, sizeof (CANARY)) != 0))
+    if (check_canary (stk))
     {
         return CANT_POP;
     }
@@ -558,32 +459,12 @@ enum STACK_ERROR stack_pop (const size_t stack_encode, stack_elem* const element
 
     #ifdef HASH_PROT
 
-    char* hash_ptr = (char*) (stk->data);
-
-    size_t hash_sum = 0;
-
-    while (hash_ptr < (char*) (stk->data) + stk->capacity * sizeof (stack_elem))
-    {
-        hash_sum += *hash_ptr;
-        hash_ptr++;
-    }
-
-    if (hash_sum != stk->hash_data)
+    if (stk->hash_stack != hashing (stk, sizeof (stack) - sizeof (stk->hash_stack)))
     {
         return CANT_POP;
     }
 
-    hash_sum = 0;
-
-    hash_ptr = (char*) stk;
-
-    while (hash_ptr < (char*) stk + sizeof (stack) - sizeof (stack->hash_stack))
-    {
-        hash_sum += *hash_ptr;
-        hash_ptr++;
-    }
-
-    if (hash_sum != stk->hash_stack)
+    if (stk->hash_data != hashing (stk->data, stk->capacity * sizeof (stack_elem)))
     {
         return CANT_POP;
     }
@@ -592,34 +473,15 @@ enum STACK_ERROR stack_pop (const size_t stack_encode, stack_elem* const element
 
     enum STACK_ERROR error = DONE;
 
-    if (stk->size == stk->capacity / 4)
-    {
-        error = stack_resize (stk, DOWN);
-    }
-
     if (stk->size == 0)
     {
         return CANT_POP;
     }
 
-    #ifdef HASH_PROT
-
-    char* hash_ptr = (char*) (stk->data) + (stk->size - 1) * sizeof (stack_elem);
-
-    while (hash_ptr < (char*) (stk->data) + stk->size * sizeof (stack_elem))
+    if (stk->size == stk->capacity / 4)
     {
-        stk->hash_data -= (size_t) *hash_ptr;
+        error = stack_resize (stk, DOWN);
     }
-
-    hash_ptr = &(stk->size);
-
-    while (hash_ptr < (char*) (stk->size) + sizeof (stk->size))
-    {
-        stk->hash_stack -= (size_t) *hash_ptr;
-        hash_ptr++;
-    }
-
-    #endif // HASH_PROT
 
     *element = stk->data [stk->size - 1];
     stk->data [stk->size - 1] = POISON;
@@ -627,22 +489,15 @@ enum STACK_ERROR stack_pop (const size_t stack_encode, stack_elem* const element
 
     #ifdef HASH_PROT
 
-    hash_ptr = &(stk->size);
+    stk->hash_data = hashing (stk->data, stk->capacity * sizeof (stack_elem));
 
-    while (hash_ptr < (char*) (stk->size) + sizeof (stk->size))
-    {
-        stk->hash_stack += (size_t) *hash_ptr;
-        hash_ptr++;
-    }
+    stk->hash_stack = hashing (stk, sizeof (stack) - sizeof (stk->hash_stack));
 
     #endif // HASH_PROT
 
     #ifdef CANARY_PROT
 
-    if ((memcmp ((char*) stk - sizeof (CANARY), &CANARY, sizeof (CANARY)) != 0)
-        || (memcmp ((char*) stk + sizeof (stack), &CANARY, sizeof (CANARY)) != 0)
-        || (memcmp ((char*) (stk->data) - sizeof (CANARY), &CANARY, sizeof (CANARY)) != 0)
-        || (memcmp ((char*) (stk->data) + stk->capacity * sizeof (stack_elem), &CANARY, sizeof (CANARY)) != 0))
+    if (check_canary (stk))
     {
         return CANT_POP;
     }
@@ -669,10 +524,7 @@ enum STACK_ERROR dump (const size_t stack_encode, const char* const file, const 
 
     #ifdef CANARY_PROT
 
-    if ((memcmp ((char*) stk - sizeof (CANARY), &CANARY, sizeof (CANARY)) != 0)
-        || (memcmp ((char*) stk + sizeof (stack), &CANARY, sizeof (CANARY)) != 0)
-        || (memcmp ((char*) (stk->data) - sizeof (CANARY), &CANARY, sizeof (CANARY)) != 0)
-        || (memcmp ((char*) (stk->data) + stk->capacity * sizeof (stack_elem), &CANARY, sizeof (CANARY)) != 0))
+    if (check_canary (stk))
     {
         return CANT_DUMP;
     }
@@ -681,32 +533,12 @@ enum STACK_ERROR dump (const size_t stack_encode, const char* const file, const 
 
     #ifdef HASH_PROT
 
-    char* hash_ptr = (char*) (stk->data);
-
-    size_t hash_sum = 0;
-
-    while (hash_ptr < (char*) (stk->data) + stk->capacity * sizeof (stack_elem))
-    {
-        hash_sum += *hash_ptr;
-        hash_ptr++;
-    }
-
-    if (hash_sum != stk->hash_data)
+    if (stk->hash_stack != hashing (stk, sizeof (stack) - sizeof (stk->hash_stack)))
     {
         return CANT_DUMP;
     }
 
-    hash_sum = 0;
-
-    hash_ptr = (char*) stk;
-
-    while (hash_ptr < (char*) stk + sizeof (stack) - sizeof (stack->hash_stack))
-    {
-        hash_sum += *hash_ptr;
-        hash_ptr++;
-    }
-
-    if (hash_sum != stk->hash_stack)
+    if (stk->hash_data != hashing (stk->data, stk->capacity * sizeof (stack_elem)))
     {
         return CANT_DUMP;
     }
