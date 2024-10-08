@@ -28,7 +28,7 @@ static const size_t CANARY = 1910;
 
 static const char POISON     = '@';    //  '@' == 64
 static const size_t MIN_SIZE = 100;
-static const size_t MAX_SIZE = 20000;
+static const size_t MAX_SIZE = 100000000;
 static const int STACK_SCALE = 2;
 static const size_t KEY      = (size_t) time (NULL);
 
@@ -77,8 +77,8 @@ enum STACK_ERROR stack_ctor (size_t* const stack_encode, const size_t num_elem,
 
     *stk = {file, line, func, name, 0, 0, NULL};
 
-    size_t num = (num_elem > MIN_SIZE) ? num_elem : MIN_SIZE;
-    num = (num < MAX_SIZE) ? num : MAX_SIZE;
+    size_t num = (num_elem * sizeof (stack_elem) > MIN_SIZE) ? num_elem : MIN_SIZE;
+    num = (num * sizeof (stack_elem) < MAX_SIZE) ? num : MAX_SIZE;
 
     #ifdef CANARY_PROT
 
@@ -107,7 +107,11 @@ enum STACK_ERROR stack_ctor (size_t* const stack_encode, const size_t num_elem,
 
     for (size_t i = 0; i < stk->capacity; i++)
     {
-        stk->data [i] = POISON;
+        memcpy (stk->data + i, &POISON, sizeof (POISON));
+        if (sizeof (stack_elem) - sizeof (POISON) > 0)
+        {
+            memset ((char*) (stk->data + i) + sizeof (POISON), 0, sizeof (stack_elem) - sizeof (POISON));
+        }
     }
 
     *stack_encode = ((size_t) stk) ^ KEY;
@@ -123,9 +127,9 @@ enum STACK_ERROR stack_ctor (size_t* const stack_encode, const size_t num_elem,
 
     #ifdef HASH_PROT
 
-    stk->hash_data = hashing (stk->data, stk->capacity * sizeof (stack_elem));
+    stk->hash_data = hashing ((const uint8_t*) stk->data, stk->capacity * sizeof (stack_elem));
 
-    stk->hash_stack = hashing (stk, sizeof (stack) - sizeof (stk->hash_stack));
+    stk->hash_stack = hashing ((const uint8_t*) stk, sizeof (stack) - sizeof (stk->hash_stack));
 
     #endif // HASH_PROT
 
@@ -152,12 +156,12 @@ enum STACK_ERROR stack_dtor (const size_t stack_encode)
 
     #ifdef HASH_PROT
 
-    if (stk->hash_stack != hashing (stk, sizeof (stack) - sizeof (stk->hash_stack)))
+    if (stk->hash_stack != hashing ((const uint8_t*) stk, sizeof (stack) - sizeof (stk->hash_stack)))
     {
         return CANT_DESTROY;
     }
 
-    if (stk->hash_data != hashing (stk->data, stk->capacity * sizeof (stack_elem)))
+    if (stk->hash_data != hashing ((const uint8_t*) stk->data, stk->capacity * sizeof (stack_elem)))
     {
         return CANT_DESTROY;
     }
@@ -220,12 +224,12 @@ static int stack_ok (stack* const stk)
 
     #ifdef HASH_PROT
 
-    if (stk->hash_stack != hashing (stk, sizeof (stack) - sizeof (stk->hash_stack)))
+    if (stk->hash_stack != hashing ((const uint8_t*) stk, sizeof (stack) - sizeof (stk->hash_stack)))
     {
         return BAD_STACK;
     }
 
-    if (stk->hash_data != hashing (stk->data, stk->capacity * sizeof (stack_elem)))
+    if (stk->hash_data != hashing ((const uint8_t*) stk->data, stk->capacity * sizeof (stack_elem)))
     {
         return BAD_STACK;
     }
@@ -279,12 +283,12 @@ static int stack_ok (stack* const stk)
 
     #ifdef HASH_PROT
 
-    if (stk->hash_stack != hashing (stk, sizeof (stack) - sizeof (stk->hash_stack)))
+    if (stk->hash_stack != hashing ((const uint8_t*) stk, sizeof (stack) - sizeof (stk->hash_stack)))
     {
         return BAD_STACK;
     }
 
-    if (stk->hash_data != hashing (stk->data, stk->capacity * sizeof (stack_elem)))
+    if (stk->hash_data != hashing ((const uint8_t*) stk->data, stk->capacity * sizeof (stack_elem)))
     {
         return BAD_STACK;
     }
@@ -308,24 +312,28 @@ static enum STACK_ERROR stack_resize (stack* const stk, const enum RESIZE_DIRECT
         return CANT_RESIZE;
     }
 
-    const size_t location_canary = stk->capacity;
-
     #endif // CANARY_PROT
 
     #ifdef HASH_PROT
 
-    if (stk->hash_stack != hashing (stk, sizeof (stack) - sizeof (stk->hash_stack)))
+    if (stk->hash_stack != hashing ((const uint8_t*) stk, sizeof (stack) - sizeof (stk->hash_stack)))
     {
         return CANT_RESIZE;
     }
 
-    if (stk->hash_data != hashing (stk->data, stk->capacity * sizeof (stack_elem)))
+    if (stk->hash_data != hashing ((const uint8_t*) stk->data, stk->capacity * sizeof (stack_elem)))
     {
         return CANT_RESIZE;
     }
 
     #endif // HASH_PROT
 
+    if ((flag == UP) && (stk->capacity * sizeof (stack_elem) * STACK_SCALE > MAX_SIZE))
+    {
+        return CANT_RESIZE;
+    }
+
+    size_t previously_capacity = stk->capacity;
     stk->capacity = (flag == UP)
                             ? stk->capacity * STACK_SCALE
                             : stk->capacity / STACK_SCALE;
@@ -338,14 +346,9 @@ static enum STACK_ERROR stack_resize (stack* const stk, const enum RESIZE_DIRECT
 
     if ((char*) stk->data - sizeof (CANARY) == NULL)
     {
-        CANT_RESIZE;
+        return CANT_RESIZE;
     }
 
-    if (flag == UP)
-    {
-        size_t zero = 0UL;
-        memcpy ((char*) (stk->data) + location_canary * sizeof (stack_elem), &zero, sizeof (zero));
-    }
     memcpy ((char*) (stk->data) + stk->capacity * sizeof (stack_elem), &CANARY, sizeof (CANARY));
 
     #else // CANARY_PROT
@@ -359,11 +362,23 @@ static enum STACK_ERROR stack_resize (stack* const stk, const enum RESIZE_DIRECT
 
     #endif // CANARY_PROT
 
+    if (flag == UP)
+    {
+        for (size_t i = previously_capacity; i < stk->capacity; i++)
+        {
+            memcpy (stk->data + i, &POISON, sizeof (POISON));
+            if (sizeof (stack_elem) - sizeof (POISON) > 0)
+            {
+                memset ((char*) (stk->data + i) + sizeof (POISON), 0, sizeof (stack_elem) - sizeof (POISON));
+            }
+        }
+    }
+
     #ifdef HASH_PROT
 
-    stk->hash_data = hashing (stk->data, stk->capacity * sizeof (stack_elem));
+    stk->hash_data = hashing ((const uint8_t*) stk->data, stk->capacity * sizeof (stack_elem));
 
-    stk->hash_stack = hashing (stk, sizeof (stack) - sizeof (stk->hash_stack));
+    stk->hash_stack = hashing ((const uint8_t*) stk, sizeof (stack) - sizeof (stk->hash_stack));
 
     #endif // HASH_PROT
 
@@ -399,12 +414,12 @@ enum STACK_ERROR stack_push (const size_t stack_encode, const stack_elem element
 
     #ifdef HASH_PROT
 
-    if (stk->hash_stack != hashing (stk, sizeof (stack) - sizeof (stk->hash_stack)))
+    if (stk->hash_stack != hashing ((const uint8_t*) stk, sizeof (stack) - sizeof (stk->hash_stack)))
     {
         return CANT_PUSH;
     }
 
-    if (stk->hash_data != hashing (stk->data, stk->capacity * sizeof (stack_elem)))
+    if (stk->hash_data != hashing ((const uint8_t*) stk->data, stk->capacity * sizeof (stack_elem)))
     {
         return CANT_PUSH;
     }
@@ -416,6 +431,10 @@ enum STACK_ERROR stack_push (const size_t stack_encode, const stack_elem element
     if (stk->size == stk->capacity)
     {
         error = stack_resize (stk, UP);
+        if (error == CANT_RESIZE)
+        {
+            return CANT_PUSH;
+        }
     }
 
     stk->data [stk->size] = element;
@@ -432,7 +451,7 @@ enum STACK_ERROR stack_push (const size_t stack_encode, const stack_elem element
 
     #ifdef HASH_PROT
 
-    stk->hash_data = hashing (stk->data, stk->capacity * sizeof (stack_elem));
+    stk->hash_data = hashing ((const uint8_t*) stk->data, stk->capacity * sizeof (stack_elem));
 
     #endif // HASH_PROT
 
@@ -459,12 +478,12 @@ enum STACK_ERROR stack_pop (const size_t stack_encode, stack_elem* const element
 
     #ifdef HASH_PROT
 
-    if (stk->hash_stack != hashing (stk, sizeof (stack) - sizeof (stk->hash_stack)))
+    if (stk->hash_stack != hashing ((const uint8_t*) stk, sizeof (stack) - sizeof (stk->hash_stack)))
     {
         return CANT_POP;
     }
 
-    if (stk->hash_data != hashing (stk->data, stk->capacity * sizeof (stack_elem)))
+    if (stk->hash_data != hashing ((const uint8_t*) stk->data, stk->capacity * sizeof (stack_elem)))
     {
         return CANT_POP;
     }
@@ -481,6 +500,10 @@ enum STACK_ERROR stack_pop (const size_t stack_encode, stack_elem* const element
     if (stk->size == stk->capacity / 4)
     {
         error = stack_resize (stk, DOWN);
+        if (error == CANT_RESIZE)
+        {
+            return CANT_PUSH;
+        }
     }
 
     *element = stk->data [stk->size - 1];
@@ -489,9 +512,9 @@ enum STACK_ERROR stack_pop (const size_t stack_encode, stack_elem* const element
 
     #ifdef HASH_PROT
 
-    stk->hash_data = hashing (stk->data, stk->capacity * sizeof (stack_elem));
+    stk->hash_data = hashing ((const uint8_t*) stk->data, stk->capacity * sizeof (stack_elem));
 
-    stk->hash_stack = hashing (stk, sizeof (stack) - sizeof (stk->hash_stack));
+    stk->hash_stack = hashing ((const uint8_t*) stk, sizeof (stack) - sizeof (stk->hash_stack));
 
     #endif // HASH_PROT
 
@@ -518,7 +541,7 @@ enum STACK_ERROR dump (const size_t stack_encode, const char* const file, const 
 
     if (stk == NULL)
     {
-        printf ("\nStruct has NULL pointer.\n");
+        fprintf (stderr, "\nStruct has NULL pointer.\n");
         return DONE;
     }
 
@@ -533,12 +556,12 @@ enum STACK_ERROR dump (const size_t stack_encode, const char* const file, const 
 
     #ifdef HASH_PROT
 
-    if (stk->hash_stack != hashing (stk, sizeof (stack) - sizeof (stk->hash_stack)))
+    if (stk->hash_stack != hashing ((const uint8_t*) stk, sizeof (stack) - sizeof (stk->hash_stack)))
     {
         return CANT_DUMP;
     }
 
-    if (stk->hash_data != hashing (stk->data, stk->capacity * sizeof (stack_elem)))
+    if (stk->hash_data != hashing ((const uint8_t*) stk->data, stk->capacity * sizeof (stack_elem)))
     {
         return CANT_DUMP;
     }
@@ -547,79 +570,79 @@ enum STACK_ERROR dump (const size_t stack_encode, const char* const file, const 
 
     if (stk->name == NULL)
     {
-        printf ("\nStruct has invalid pointer for name but has own pointer");
+        fprintf (stderr, "\nStruct has invalid pointer for name but has own pointer");
     }
     else
     {
-        printf ("\nStruct %s", stk->name);
+        fprintf (stderr, "\nStruct %s", stk->name);
     }
 
-    printf (" [%p] at %s:%d", stk, file, line);
+    fprintf (stderr, " [%p] at %s:%d", stk, file, line);
 
     if (stk->file == NULL)
     {
-        printf (" hasn't name of file where it was born\n");
+        fprintf (stderr, " hasn't name of file where it was born\n");
     }
     else
     {
-        printf (" was born at %s", stk->file);
+        fprintf (stderr, " was born at %s", stk->file);
     }
 
     if (stk->line <= 0)
     {
-        printf (" but the number of line where it was born was lost.");
+        fprintf (stderr, " but the number of line where it was born was lost.");
     }
     else
     {
-        printf (":%d", stk->line);
+        fprintf (stderr, ":%d", stk->line);
     }
 
     if (stk->func == NULL)
     {
-        printf (" but the function where it was born is undefined\n");
+        fprintf (stderr, " but the function where it was born is undefined\n");
     }
     else
     {
-        printf (" (%s)\n", stk->func);
+        fprintf (stderr, " (%s)\n", stk->func);
     }
 
     if (stk->capacity == 0)
     {
-        printf ("Struct hasn\'t any elements.\n");
+        fprintf (stderr, "Struct hasn\'t any elements.\n");
         return DONE;
     }
 
     if ((stk->size > stk->capacity) || (stk->size > MAX_SIZE))
     {
-        printf ("Struct has invalid information about size and capacity.\n");
+        fprintf (stderr, "Struct has invalid information about size and capacity.\n");
         return DONE;
     }
 
-    printf ("{\n");
+    fprintf (stderr, "{\n");
 
     for (size_t i = 0; i < stk->size; i++)
     {
-        printf ("\t#[%lu] ", i);
+        fprintf (stderr, "\t#[%lu] ", i);
         size_t j = 0;
         while (j < sizeof (stack_elem))
         {
             char* symbol = ((char*) (stk->data) + i * sizeof (stack_elem) + j);
-            printf ("%c ", *symbol);
+            fprintf (stderr, "%8.8b ", *symbol);
             j++;
         }
-        printf ("\n");
+        fprintf (stderr, "\n");
     }
 
     for (size_t i = stk->size; (i < MAX_SIZE) && (i < stk->capacity); i++)
     {
-        printf ("\t [%lu] @ POISON\n", i);
+        fprintf (stderr, "\t [%lu] @ POISON\n", i);
     }
 
-    printf ("}\n");
+    fprintf (stderr, "}\n");
 
     if (MAX_SIZE < stk->capacity)
     {
-        printf (" %lu Stack has much more elements than MAX_SIZE\n", stk->capacity);
+        fprintf (stderr, " %lu Stack has much more elements than MAX_SIZE\n", stk->capacity);
     }
 
     return DONE;
